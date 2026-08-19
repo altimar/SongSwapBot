@@ -1,0 +1,20 @@
+{
+	// Конфиг воркера. После `wrangler d1 create songswap` замени database_id на реальный.
+	"name": "songswapbot",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-06-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"vars": {
+		// ADMIN_IDS в конфиге не хранится (не должно попадать в репозиторий):
+		// задаётся секретом — wrangler secret put ADMIN_IDS — значением вида "123456789,987654321"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "songswap",
+			"database_id": "084e67c9-570f-4396-b70b-5df550121871"
+		}
+	]
+}

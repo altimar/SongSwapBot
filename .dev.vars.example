@@ -1,0 +1,6 @@
+# Скопируй в .dev.vars и подставь свои значения для локального запуска.
+BOT_TOKEN=123456:TEST
+WEBHOOK_SECRET=dev-secret
+ADMIN_IDS=111
+# Подставный результат getMe — чтобы дев-воркер не ходил в Telegram API.
+BOT_INFO_JSON={"id":999,"is_bot":true,"first_name":"SongSwapDev","username":"songswap_dev_bot"}
