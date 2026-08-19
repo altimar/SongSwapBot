@@ -20,7 +20,6 @@ export function registerMiscHandlers(bot: Bot, deps: BotDeps): void {
   });
 
   bot.command("help", async (ctx) => {
-    const isAdmin = ctx.from !== undefined && deps.adminIds.has(ctx.from.id);
     const username = bot.botInfo?.username;
     await ctx.reply(
       [
@@ -38,16 +37,12 @@ export function registerMiscHandlers(bot: Bot, deps: BotDeps): void {
         "Команды:",
         "• /status — участники и твои песни (в личке с ботом)",
         "• /leave — выйти из свопа",
-        ...(isAdmin
-          ? [
-              "",
-              "Админам (в групповом чате):",
-              "• /newswap [название] — открыть публичный своп (старый удалится)",
-              "• /newsecret [название] — открыть секретный своп (песни скрыты до жеребьёвки)",
-              "• /close — закрыть приём песен",
-              "• /draw — жеребьёвка (повторно — перерозыгрыш)",
-            ]
-          : []),
+        "",
+        "Администраторам чата (управление свопом своего чата):",
+        "• /newswap [название] — открыть публичный своп (старый удалится)",
+        "• /newsecret [название] — открыть секретный своп (песни скрыты до жеребьёвки)",
+        "• /close — закрыть приём песен",
+        "• /draw — жеребьёвка (повторно — перерозыгрыш)",
       ].join("\n"),
     );
   });

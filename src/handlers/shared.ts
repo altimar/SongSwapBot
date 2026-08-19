@@ -20,6 +20,28 @@ export async function isChatMember(api: Api, chatId: number, userId: number): Pr
   }
 }
 
+// Администратор/владелец ли чата. В условно-публичной модели бота именно это
+// даёт права на управление свопами своего чата. Ошибка API — «не админ».
+export async function isChatAdmin(api: Api, chatId: number, userId: number): Promise<boolean> {
+  try {
+    const member = await api.getChatMember(chatId, userId);
+    return member.status === "administrator" || member.status === "creator";
+  } catch (error) {
+    console.error(`getChatMember(${chatId}, ${userId}) failed:`, error);
+    return false;
+  }
+}
+
+// Глобальные суперадмины (опциональный секрет ADMIN_IDS) + администраторы конкретного чата.
+export async function canAdminChat(
+  api: Api,
+  superAdmins: Set<number>,
+  chatId: number,
+  userId: number,
+): Promise<boolean> {
+  return superAdmins.has(userId) || isChatAdmin(api, chatId, userId);
+}
+
 async function chatTitle(api: Api, chatId: number): Promise<string | null> {
   try {
     const chat = await api.getChat(chatId);

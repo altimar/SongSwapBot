@@ -4,7 +4,7 @@ import type { BotDeps } from "../deps";
 import { sendSafe } from "../logic/notify";
 import { closeSwap, drawSummaryText, runDraw } from "../logic/swap";
 import { handlePick } from "./choose";
-import { chooserKeyboard, rerunKeyboard } from "./shared";
+import { canAdminChat, chooserKeyboard, rerunKeyboard } from "./shared";
 
 const NEW_SWAP_CALLBACK = "newswap:"; // newswap:<mode>:<title>
 const MAX_CALLBACK_DATA_BYTES = 64;
@@ -19,16 +19,30 @@ export function registerAdminHandlers(bot: Bot, deps: BotDeps): void {
   });
 
   bot.command("close", async (ctx) => {
-    if (!(await requireAdmin(ctx, deps))) return;
-    const candidates = ctx.chat.type === "private"
-      ? await deps.repo.listSwaps(["collecting"])
-      : swapOrNil(await deps.repo.getSwapByChat(ctx.chat.id));
+    const from = ctx.from;
+    if (!from) return;
+    let candidates: SwapRow[];
+    if (ctx.chat.type === "private") {
+      // В личке показываем только свопы, которыми этот человек вправе управлять.
+      const all = await deps.repo.listSwaps(["collecting"]);
+      candidates = [];
+      for (const swap of all) {
+        if (await canAdminChat(bot.api, deps.adminIds, swap.chat_id, from.id)) candidates.push(swap);
+      }
+    } else {
+      const swap = await deps.repo.getSwapByChat(ctx.chat.id);
+      if (!swap) {
+        await ctx.reply("В этой группе нет активного свопа — сначала /newswap.");
+        return;
+      }
+      if (!(await canAdminChat(bot.api, deps.adminIds, ctx.chat.id, from.id))) {
+        await ctx.reply("Эта команда доступна только администраторам чата 🤫");
+        return;
+      }
+      candidates = [swap];
+    }
     if (candidates.length === 0) {
-      await ctx.reply(
-        ctx.chat.type === "private"
-          ? "Нет свопов с открытым приёмом."
-          : "В этой группе нет активного свопа — сначала /newswap.",
-      );
+      await ctx.reply("У тебя нет свопов с открытым приёмом.");
       return;
     }
     if (candidates.length > 1) {
@@ -36,23 +50,36 @@ export function registerAdminHandlers(bot: Bot, deps: BotDeps): void {
       return;
     }
     const text = await closeSwap(bot.api, deps.repo, candidates[0], {
-      actorId: ctx.from!.id,
+      actorId: from.id,
       chatId: ctx.chat.id,
     });
     await ctx.reply(text);
   });
 
   bot.command("draw", async (ctx) => {
-    if (!(await requireAdmin(ctx, deps))) return;
-    const candidates = ctx.chat.type === "private"
-      ? await deps.repo.listSwaps(["closed", "drawn"])
-      : swapOrNil(await deps.repo.getSwapByChat(ctx.chat.id));
+    const from = ctx.from;
+    if (!from) return;
+    let candidates: SwapRow[];
+    if (ctx.chat.type === "private") {
+      const all = await deps.repo.listSwaps(["closed", "drawn"]);
+      candidates = [];
+      for (const swap of all) {
+        if (await canAdminChat(bot.api, deps.adminIds, swap.chat_id, from.id)) candidates.push(swap);
+      }
+    } else {
+      const swap = await deps.repo.getSwapByChat(ctx.chat.id);
+      if (!swap) {
+        await ctx.reply("В этой группе нет активного свопа — сначала /newswap.");
+        return;
+      }
+      if (!(await canAdminChat(bot.api, deps.adminIds, ctx.chat.id, from.id))) {
+        await ctx.reply("Эта команда доступна только администраторам чата 🤫");
+        return;
+      }
+      candidates = [swap];
+    }
     if (candidates.length === 0) {
-      await ctx.reply(
-        ctx.chat.type === "private"
-          ? "Нет свопов, готовых к жеребьёвке (нужны /newswap и /close)."
-          : "В этой группе нет активного свопа — сначала /newswap.",
-      );
+      await ctx.reply("У тебя нет свопов, готовых к жеребьёвке (нужны /newswap и /close).");
       return;
     }
     if (candidates.length > 1) {
@@ -71,14 +98,14 @@ export function registerAdminHandlers(bot: Bot, deps: BotDeps): void {
     }
 
     if (data.startsWith("draw:") && data.endsWith(":rerun")) {
-      if (!deps.adminIds.has(ctx.callbackQuery.from.id)) {
-        await ctx.answerCallbackQuery("Кнопки только для админов").catch(() => {});
+      const swapId = Number(data.slice("draw:".length, -":rerun".length));
+      const swap = Number.isInteger(swapId) ? await deps.repo.getSwapById(swapId) : null;
+      if (!swap || !(await canAdminChat(bot.api, deps.adminIds, swap.chat_id, ctx.callbackQuery.from.id))) {
+        await ctx.answerCallbackQuery("Доступно администраторам чата свопа").catch(() => {});
         return;
       }
       await ctx.answerCallbackQuery("Переразыгрываю…").catch(() => {});
-      const swapId = Number(data.slice("draw:".length, -":rerun".length));
-      const swap = Number.isInteger(swapId) ? await deps.repo.getSwapById(swapId) : null;
-      if (!swap || swap.state !== "drawn") {
+      if (swap.state !== "drawn") {
         await ctx.editMessageText("Своп уже не в состоянии розыгрыша.").catch(() => {});
         return;
       }
@@ -91,13 +118,13 @@ export function registerAdminHandlers(bot: Bot, deps: BotDeps): void {
     }
 
     if (data.startsWith(NEW_SWAP_CALLBACK)) {
-      if (!deps.adminIds.has(ctx.callbackQuery.from.id)) {
-        await ctx.answerCallbackQuery("Кнопки только для админов").catch(() => {});
-        return;
-      }
       const chat = ctx.callbackQuery.message?.chat;
       if (!chat || chat.type === "private") {
         await ctx.answerCallbackQuery("Своп открывается в групповом чате").catch(() => {});
+        return;
+      }
+      if (!(await canAdminChat(bot.api, deps.adminIds, chat.id, ctx.callbackQuery.from.id))) {
+        await ctx.answerCallbackQuery("Открыть своп может только администратор чата").catch(() => {});
         return;
       }
       // Режим и название тащим в callback_data: newswap:<mode>:<title>
@@ -134,10 +161,6 @@ export function registerAdminHandlers(bot: Bot, deps: BotDeps): void {
   });
 }
 
-function swapOrNil(swap: SwapRow | null): SwapRow[] {
-  return swap ? [swap] : [];
-}
-
 async function drawCommandFlow(bot: Bot, deps: BotDeps, ctx: Context, swap: SwapRow): Promise<void> {
   if (swap.state === "collecting") {
     await ctx.reply("Сначала закрой приём песен: /close");
@@ -155,13 +178,18 @@ async function drawCommandFlow(bot: Bot, deps: BotDeps, ctx: Context, swap: Swap
 }
 
 // Общий старт /newswap и /newsecret: оба режима создаются в группе и привязываются к ней.
+// Права: администратор этого чата (или глобальный суперадмин).
 async function startSwapCommand(bot: Bot, deps: BotDeps, ctx: Context, mode: SwapMode): Promise<void> {
-  if (!(await requireAdmin(ctx, deps))) return;
-  if (!ctx.chat) return;
+  const from = ctx.from;
+  if (!from || !ctx.chat) return;
   if (ctx.chat.type === "private") {
     await ctx.reply(
       "Свопы создаются в групповом чате: добавь меня в группу и там открой /newswap (публичный) или /newsecret (секретный).",
     );
+    return;
+  }
+  if (!(await canAdminChat(bot.api, deps.adminIds, ctx.chat.id, from.id))) {
+    await ctx.reply("Открыть своп может только администратор этого чата 🤫");
     return;
   }
   const title = typeof ctx.match === "string" ? ctx.match.trim() : "";
@@ -187,17 +215,6 @@ async function startSwapCommand(bot: Bot, deps: BotDeps, ctx: Context, mode: Swa
     return;
   }
   await createSwapFromContext(bot, deps, ctx, mode, title || null);
-}
-
-async function requireAdmin(ctx: Context, deps: BotDeps): Promise<boolean> {
-  const userId = ctx.from?.id;
-  if (userId !== undefined && deps.adminIds.has(userId)) return true;
-  if (deps.adminIds.size === 0) {
-    await ctx.reply("Бот не настроен: в ADMIN_IDS не указан ни один админ (см. README).");
-  } else {
-    await ctx.reply("Эта команда только для админов 🤫");
-  }
-  return false;
 }
 
 async function createSwapFromContext(

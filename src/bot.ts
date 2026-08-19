@@ -18,7 +18,7 @@ export function createBot(env: Env): Bot {
   }
   const deps: BotDeps = {
     repo: new Repo(env.DB),
-    adminIds: parseAdminIds(env.ADMIN_IDS),
+    adminIds: parseAdminIds(env.ADMIN_IDS ?? ""),
   };
   // Ошибки логируем и проглатываем: возврат 500 заставил бы Telegram
   // доставить апдейт повторно и выполнить команду второй раз.

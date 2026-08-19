@@ -24,12 +24,18 @@ class Handler(BaseHTTPRequestHandler):
         with open(LOG_PATH, "a", encoding="utf-8") as log:
             log.write(json.dumps({"method": method, "body": body}, ensure_ascii=False) + "\n")
 
-        # Правило для тестов: user_id >= 9000 — не участник чата, остальные — member.
+        # Правило для тестов: user_id >= 9000 — «left» (не участник),
+        # 600–699 — «administrator» (админ чата), остальные — «member».
         result = {"message_id": 1, "date": 0, "chat": {"id": 1, "type": "private"}, "text": ""}
         if method == "getChatMember":
             params = urllib.parse.parse_qs(body)
             user_id = int(params.get("user_id", ["0"])[0])
-            status = "left" if user_id >= 9000 else "member"
+            if user_id >= 9000:
+                status = "left"
+            elif 600 <= user_id < 700:
+                status = "administrator"
+            else:
+                status = "member"
             result = {"status": status, "user": {"id": user_id, "is_bot": False, "first_name": "U"}}
         elif method == "getChat":
             result = {"id": -100, "type": "supergroup", "title": "Мок-чат"}

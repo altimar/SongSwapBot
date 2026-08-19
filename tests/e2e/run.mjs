@@ -43,10 +43,12 @@ function startMock() {
         const method = req.url.split("/").pop();
         outbox.push({ method, chat: String(parsed.chat_id ?? ""), text: parsed.text ?? "", buttons: buttonsOf(parsed.reply_markup) });
 
-        // Правило для тестов: user_id >= 9000 — не участник чата, остальные — member.
+        // Правило для тестов: user_id >= 9000 — «left» (не участник),
+        // 600–699 — «administrator» (админ чата), остальные — «member».
         let result = { message_id: 1, date: 0, chat: { id: 1, type: "private" }, text: "" };
         if (method === "getChatMember") {
-          const status = Number(parsed.user_id) >= 9000 ? "left" : "member";
+          const uid = Number(parsed.user_id);
+          const status = uid >= 9000 ? "left" : uid >= 600 && uid < 700 ? "administrator" : "member";
           result = { status, user: { id: parsed.user_id, is_bot: false, first_name: "U" } };
         } else if (method === "getChat") {
           result = { id: parsed.chat_id, type: "supergroup", title: "Мок-чат" };
@@ -283,7 +285,7 @@ async function scenarioSinglePublic() {
       sentTo(9001).some((o) => o.text.includes("только для участников")));
 
   await send(msg(10, g, "/close"));
-  check("не-админу команды закрыты", sentTo(-3001).some((o) => o.text.includes("только для админов")));
+  check("не-админу команды закрыты", sentTo(-3001).some((o) => o.text.includes("администратор")));
 
   await send(msg(ADMIN, g, "/close"));
   check("приём закрыт", db(`SELECT state FROM swaps WHERE id=${S}`)[0].state === "closed");
@@ -331,7 +333,7 @@ async function scenarioSecret() {
   check("создание из лички отклоняется с подсказкой про группу",
     sentTo(ADMIN).filter((o) => o.text.includes("Свопы создаются в групповом чате")).length === 2);
   await send(msg(77, g, "/newsecret Хак"));
-  check("не-админ не может открыть секретный своп", sentTo(-4200).some((o) => o.text.includes("только для админов")));
+  check("не-админ не может открыть секретный своп", sentTo(-4200).some((o) => o.text.includes("администратор")));
 
   await send(msg(ADMIN, g, "/newsecret Тайный"));
   const swaps = db("SELECT id, mode, chat_id, state FROM swaps");
@@ -471,7 +473,7 @@ async function scenarioEdges() {
   await send(msg(77, g, "/close"));
   await send(msg(77, g, "/newswap Хак"));
   check("админ-команды не-админу закрыты",
-    sentTo(-5001).filter((o) => o.text.includes("только для админов")).length >= 2);
+    sentTo(-5001).filter((o) => o.text.includes("администратор")).length >= 2);
   await send(msg(77, priv(77), "/foo"));
   check("неизвестная команда", sentTo(77).some((o) => o.text.includes("Не знаю такую команду")));
   await send(photoMsg(77, priv(77)));
@@ -482,13 +484,9 @@ async function scenarioEdges() {
   check("стартовое приветствие", sentTo(77).some((o) => o.text.includes("караоке-свопов")));
   await send(msg(77, priv(77), "/help"));
   const help77 = sentTo(77).find((o) => o.text.includes("Как устроен своп"));
-  check("help: не-админ не видит админ-команды",
-    help77 !== undefined && help77.text.includes("/leave") && !help77.text.includes("/close") &&
-      !help77.text.includes("/newswap") && !help77.text.includes("/newsecret") && !help77.text.includes("/draw"));
-  await send(msg(ADMIN, priv(ADMIN), "/help"));
-  const helpAdmin = sentTo(ADMIN).find((o) => o.text.includes("Как устроен своп"));
-  check("help: админ видит админ-команды",
-    helpAdmin !== undefined && helpAdmin.text.includes("/newsecret") && helpAdmin.text.includes("/draw"));
+  check("help: пользовательские команды + секция «Администраторам чата»",
+    help77 !== undefined && help77.text.includes("/leave") && help77.text.includes("Администраторам чата") &&
+      help77.text.includes("/newsecret") && help77.text.includes("/draw"));
   const wrong = await fetch(`http://127.0.0.1:${PORT}/webhook`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "wrong" },
@@ -499,8 +497,45 @@ async function scenarioEdges() {
   check("чужой путь — 404", notFound.status === 404);
 }
 
-// ---------- инфраструктура ----------
+async function scenarioChatAdmins() {
+  console.log("\n=== Сценарий 5: права у администраторов чата (без глобальных админов) ===");
+  const g = group(-6001, "Чат с админами");
+  await send(msg(77, g, "/newswap Без прав"));
+  check("обычный участник не может открыть своп",
+    sentTo(-6001).some((o) => o.text.includes("только администратор")) &&
+      db("SELECT COUNT(*) AS n FROM swaps")[0].n === 0);
+  await send(msg(610, g, "/newswap Админский"));
+  const swaps = db("SELECT id, chat_id, state FROM swaps");
+  check("админ чата (не глобальный) открывает своп",
+    swaps.length === 1 && swaps[0].chat_id === -6001 && swaps[0].state === "collecting", swaps);
+  const S = swaps[0].id;
+  check("шпаргалка пришла админу чата в личку", sentTo(610).some((o) => o.text.includes("Команды админа")));
+  for (const [u, s] of [[610, "Песня А"], [611, "Песня Б"], [77, "Песня В"]]) {
+    await send(msg(u, g, "/add " + s));
+  }
+  await send(msg(77, g, "/close"));
+  check("не-админ не закрывает приём",
+    db(`SELECT state FROM swaps WHERE id=${S}`)[0].state === "collecting" &&
+      sentTo(-6001).filter((o) => o.text.includes("администратор")).length >= 2);
+  await send(msg(610, g, "/close"));
+  check("админ чата закрывает приём", db(`SELECT state FROM swaps WHERE id=${S}`)[0].state === "closed");
+  await send(msg(77, g, "/draw"));
+  check("не-админ не запускает жеребьёвку", db(`SELECT state FROM swaps WHERE id=${S}`)[0].state === "closed");
+  await send(msg(610, g, "/draw"));
+  check("админ чата запускает жеребьёвку", db(`SELECT state FROM swaps WHERE id=${S}`)[0].state === "drawn");
+  checkDrawInvariants(S, [610, 611, 77], true);
+  await send(msg(ADMIN, g, "/draw"));
+  check("глобальный суперадмин сохраняет права в любом чате",
+    allButtons(`draw:${S}:rerun`).length === 1);
+  await send(msg(77, priv(77), "/draw"));
+  check("приватный draw без прав ничего не находит",
+    sentTo(77).some((o) => o.text.includes("У тебя нет свопов")));
+  await send(msg(610, priv(610), "/draw"));
+  check("приватный draw админа чата ведёт к его свопу",
+    sentTo(610).some((o) => o.text.includes("переразыграть")));
+}
 
+// ---------- инфраструктура ----------
 async function portBusy(port) {
   try {
     await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
@@ -548,7 +583,8 @@ async function main() {
     await scenarioSinglePublic(); await resetDb();
     await scenarioSecret(); await resetDb();
     await scenarioMultiChat(); await resetDb();
-    await scenarioEdges();
+    await scenarioEdges(); await resetDb();
+    await scenarioChatAdmins();
 
     const failed = checks.filter(([, ok]) => !ok).map(([n]) => n);
     console.log(`\n${"=".repeat(60)}`);

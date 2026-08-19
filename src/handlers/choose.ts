@@ -2,7 +2,7 @@ import type { Bot, Context } from "grammy";
 import type { SwapRow } from "../db/types";
 import type { BotDeps } from "../deps";
 import { closeSwap, drawSummaryText, runDraw } from "../logic/swap";
-import { addSongsToSwap, rerunKeyboard } from "./shared";
+import { addSongsToSwap, canAdminChat, rerunKeyboard } from "./shared";
 
 // Обработка результата выбора свопа кнопкой: pick:<action>:<swapId>.
 // Вызывается из общего callback-роутера в admin.ts.
@@ -47,28 +47,22 @@ export async function handlePick(
     return;
   }
 
-  if (action === "close") {
-    if (!deps.adminIds.has(userId)) {
-      await ctx.answerCallbackQuery("Кнопки только для админов").catch(() => {});
+  if (action === "close" || action === "draw") {
+    if (!(await canAdminChat(bot.api, deps.adminIds, swap.chat_id, userId))) {
+      await ctx.answerCallbackQuery("Доступно администраторам чата свопа").catch(() => {});
       return;
     }
     await ctx.answerCallbackQuery().catch(() => {});
-    const text = await closeSwap(bot.api, deps.repo, swap, {
-      actorId: userId,
-      chatId: ctx.chat?.id ?? 0,
-    });
-    await ctx.editMessageText(text).catch(() => {
-      void ctx.reply(text);
-    });
-    return;
-  }
-
-  if (action === "draw") {
-    if (!deps.adminIds.has(userId)) {
-      await ctx.answerCallbackQuery("Кнопки только для админов").catch(() => {});
+    if (action === "close") {
+      const text = await closeSwap(bot.api, deps.repo, swap, {
+        actorId: userId,
+        chatId: ctx.chat?.id ?? 0,
+      });
+      await ctx.editMessageText(text).catch(() => {
+        void ctx.reply(text);
+      });
       return;
     }
-    await ctx.answerCallbackQuery().catch(() => {});
     if (swap.state === "closed") {
       const result = await runDraw(bot.api, deps.repo, swap);
       const text = result.ok ? drawSummaryText(result) : `Жеребьёвка не удалась: ${result.error}`;
