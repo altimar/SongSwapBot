@@ -102,7 +102,8 @@ export async function closeSwap(
   const summary = `🔒 Приём песен закрыт. Участников: ${stats.participants}, песен: ${stats.songs}.`;
   if (swap.mode === "public" && origin.chatId !== swap.chat_id) {
     // Команда пришла не из чата свопа — анонсируем в чат отдельно; иначе реплая хватит.
-    await sendSafe(api, swap.chat_id, `${summary}\n\nЖеребьёвка: /draw`);
+    // В чат свопа админ-команды не светим.
+    await sendSafe(api, swap.chat_id, `${summary} Жеребьёвка скоро 🎤`);
   } else if (swap.mode === "secret") {
     const titlePart = swap.title ? ` «${swap.title}»` : "";
     if (origin.chatId !== swap.chat_id) {
@@ -113,5 +114,5 @@ export async function closeSwap(
       await sendSafe(api, p.user_id, `${summary}\nЖеребьёвка скоро — следи за личкой 🎲`);
     }
   }
-  return `${summary}\n\nЗапустить жеребьёвку: /draw`;
+  return `${summary} Жеребьёвка скоро 🎤`;
 }

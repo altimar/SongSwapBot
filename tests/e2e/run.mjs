@@ -248,18 +248,25 @@ async function scenarioSinglePublic() {
   check("своп создан сразу (без подтверждения), публичный, collecting",
     swaps.length === 1 && swaps[0].mode === "public" && swaps[0].state === "collecting" && swaps[0].title === "Тестовый", swaps);
   const S = swaps[0].id;
+  const welcome = sentTo(-3001).find((o) => o.text.includes("Своп «Тестовый» открыт"));
   check("приветствие с названием и инструкцией",
-    sentTo(-3001).some((o) => o.text.includes("Своп «Тестовый» открыт") && o.text.includes("/add")));
+    welcome !== undefined && welcome.text.includes("/add"));
+  check("welcome не светит админ-команды, шпаргалка — админу в личку",
+    welcome !== undefined && !welcome.text.includes("/draw") && !welcome.text.includes("/close") &&
+      sentTo(ADMIN).some((o) => o.text.includes("Команды админа")));
 
   await send(msg(10, g, "/add Король и Шут — Лесник\nКукла колдуна"));
-  await send(mentionMsg(11, g, "Ария — Беспечный ангел"));
+  await send(mentionMsg(11, g, "Ария — Беспечный ангел\nБи-2 — Полковнику"));
   await send(msg(12, priv(12), "Сплин — Выхода нет\nЗемфира — Рома"));
   check("песни легли от всех троих (команда, упоминание, личка)",
-    db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S}`)[0].n === 5 &&
+    db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S}`)[0].n === 6 &&
       db(`SELECT COUNT(*) AS n FROM participants WHERE swap_id=${S}`)[0].n === 3);
+  check("многострочные заявки: каждая строка — отдельная песня (и /add, и упоминание)",
+    db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S} AND user_id=10`)[0].n === 2 &&
+      db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S} AND user_id=11`)[0].n === 2);
 
   await send(msg(10, g, "/add Кукла колдуна"));
-  check("дубликат отклонён", db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S}`)[0].n === 5 &&
+  check("дубликат отклонён", db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S}`)[0].n === 6 &&
     sentTo(-3001).some((o) => o.text.includes("уже есть")));
 
   await send(msg(12, priv(12), "/leave"));
@@ -283,7 +290,7 @@ async function scenarioSinglePublic() {
   const announceCount = sentTo(-3001).filter((o) => o.text.startsWith("🔒 Приём песен закрыт")).length;
   check("анонс закрытия — ровно один (без дубля)", announceCount === 1, announceCount);
   await send(msg(10, g, "/add Ещё песня"));
-  check("после close заявки отклоняются", db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S}`)[0].n === 4 &&
+  check("после close заявки отклоняются", db(`SELECT COUNT(*) AS n FROM songs WHERE swap_id=${S}`)[0].n === 5 &&
     sentTo(-3001).some((o) => o.text.includes("Приём песен уже закрыт")));
 
   await send(msg(ADMIN, g, "/draw"));
@@ -474,7 +481,14 @@ async function scenarioEdges() {
   await send(msg(77, priv(77), "/start"));
   check("стартовое приветствие", sentTo(77).some((o) => o.text.includes("караоке-свопов")));
   await send(msg(77, priv(77), "/help"));
-  check("help со списком команд", sentTo(77).some((o) => o.text.includes("/leave")));
+  const help77 = sentTo(77).find((o) => o.text.includes("Как устроен своп"));
+  check("help: не-админ не видит админ-команды",
+    help77 !== undefined && help77.text.includes("/leave") && !help77.text.includes("/close") &&
+      !help77.text.includes("/newswap") && !help77.text.includes("/newsecret") && !help77.text.includes("/draw"));
+  await send(msg(ADMIN, priv(ADMIN), "/help"));
+  const helpAdmin = sentTo(ADMIN).find((o) => o.text.includes("Как устроен своп"));
+  check("help: админ видит админ-команды",
+    helpAdmin !== undefined && helpAdmin.text.includes("/newsecret") && helpAdmin.text.includes("/draw"));
   const wrong = await fetch(`http://127.0.0.1:${PORT}/webhook`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "wrong" },

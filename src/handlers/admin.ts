@@ -1,6 +1,7 @@
-import type { Bot, Context } from "grammy";
+import type { Api, Bot, Context } from "grammy";
 import type { SwapMode, SwapRow } from "../db/types";
 import type { BotDeps } from "../deps";
+import { sendSafe } from "../logic/notify";
 import { closeSwap, drawSummaryText, runDraw } from "../logic/swap";
 import { handlePick } from "./choose";
 import { chooserKeyboard, rerunKeyboard } from "./shared";
@@ -113,6 +114,7 @@ export function registerAdminHandlers(bot: Bot, deps: BotDeps): void {
       await ctx
         .editMessageText(welcomeText(mode, title, bot.botInfo?.username))
         .catch(() => {});
+      await sendAdminCheatSheet(bot.api, ctx.callbackQuery.from.id);
       return;
     }
 
@@ -209,6 +211,7 @@ async function createSwapFromContext(
   if (!chat || chat.type === "private") return;
   await deps.repo.createSwap(mode, chat.id, title);
   await ctx.reply(welcomeText(mode, title, bot.botInfo?.username));
+  if (ctx.from) await sendAdminCheatSheet(bot.api, ctx.from.id);
 }
 
 function welcomeText(mode: SwapMode, title: string | null, botUsername?: string): string {
@@ -225,7 +228,6 @@ function welcomeText(mode: SwapMode, title: string | null, botUsername?: string)
       "",
       "Первая песня автоматически делает участником. Участвовать могут только участники этого чата.",
       multiHint,
-      "Админ: /close — закрыть приём, /draw — жеребьёвка.",
     ].join("\n");
   }
   return [
@@ -233,9 +235,22 @@ function welcomeText(mode: SwapMode, title: string | null, botUsername?: string)
     "",
     `Участвовать могут только участники этого чата, но песни сдавайте мне в личке (${howTo}) — по одной на строку. Чужие песни никто не увидит до жеребьёвки, а жребий придёт каждому лично.`,
     multiHint,
-    "",
-    "Админ: /close — закрыть приём, /draw — жеребьёвка.",
   ].join("\n");
+}
+
+// Шпаргалка с админ-командами — только в личку админу, в чат свопа не светим.
+async function sendAdminCheatSheet(api: Api, adminId: number): Promise<void> {
+  await sendSafe(
+    api,
+    adminId,
+    [
+      "🛠 Команды админа свопов (только для тебя):",
+      "• /close — закрыть приём песен",
+      "• /draw — жеребьёвка (повторный вызов — перерозыгрыш)",
+      "• /newswap [название] — новый публичный своп в группе",
+      "• /newsecret [название] — новый секретный своп в группе",
+    ].join("\n"),
+  );
 }
 
 // Обрезаем по байтам (callback_data ≤ 64 байт), не ломая многобайтовые символы.
